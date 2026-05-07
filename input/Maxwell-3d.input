@@ -1,0 +1,97 @@
+// 
+// 文件名:	Maxwell-3d.input
+// 软件包:	JPSOL application
+// 版权  :      (c) 2004-2015 北京应用物理与计算数学研究所
+//              (c) 2013-2015 中物院高性能数值模拟软件中心
+// 版本号:	$ Revision: $
+// 修改  :	$ Date: $
+// 描述  :	输入文件: JPSOL-JAUMIN-Maxwell 实例.
+//
+
+Main{
+  // 日志文件参数.
+  log_file_name = "Maxwell-3d.log" // 日志文件名称.
+  log_all_nodes = FALSE              // TRUE表示每个进程生成一个日志文件.
+
+  // 可视化数据场的输出参数.
+  javis_dump_interval         = 0     // 输出时间步的间隔. 0表示关闭.
+  javis_dump_dirname          = "viz" // 存储数据场的目录名.
+  javis_number_procs_per_file = 1     // 多少个进程共享一个输出文件.
+}
+
+Maxwell {
+  inner_face_set_id = 9
+  outer_face_set_id = 10
+  frequency         = 3.0e8
+  epsilon_r         = 1.0
+  mu_r              = 1.0
+  eta               = 1.0
+  E_0_direction     = 1.0,0.0,0.0
+  k_0_direction     = 0.0,0.0,1.0
+  chi               = 0.0,0.0,0.0
+}
+
+
+Solver {
+  solver_lib      = "JPSOL"
+  solver_name     = "FGMRES"
+  krylov_dim = 30
+  print_iter_info = 2
+  max_iter = 4000
+  residual_tol    = 1.0e-3
+  conv_factor_threshold = 1e8
+  //print_help_info = true  
+  SubSolver {
+    solver_lib      = "HYPRE"
+    solver_name     = "AMS_CG"
+//  solver_lib = "MUMPS"
+//  solver_name = "LU"
+//  solver_name = "CHOLESKY"
+    residual_tol    = 1.0e-2  
+    print_iter_info = 0
+    max_iter = 100
+  }
+
+  
+}	  
+
+
+GridGeometry {
+  mesh_generator_name      = "MeshImporter" 
+  //patches_generator_name   = "Zoltan-RCB" 
+  //split_disconnected_patch = FALSE
+
+  MeshImportationParameter{ 
+    file_name    = "sp_to1-0-1-0.k"
+    refine_times = 2
+  }
+}
+
+GridTopology {
+  //ghost_type = "NODE" // "EDGE" is better, but JAUMIN can't support
+}
+
+HierarchyTimeIntegrator{
+  // 时间步进控制参数
+  start_time           = 0.e0 // 模拟的初始时刻.
+  end_time             = 1.0  // 模拟的终止时刻.
+  max_integrator_steps = 1    // 模拟的最大时间步数.
+  max_dt               = 1.0  // 最大时间步步长.
+  grow_dt              = 1.2  // 连续两个时间步长的最大放大倍数.
+
+  GriddingAlgorithm{
+    refine_times = 0
+    patch_size   = 1000 // 网格片大小, 即包含的网格单元数目.
+  }
+}
+
+JaVisDataWriter{
+}
+
+TimerManager{
+  timer_list      = "*::*::*"
+  print_summed    = TRUE
+  print_max       = TRUE
+  print_threshold = 0.0 
+}
+

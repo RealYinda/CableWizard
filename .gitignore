@@ -1,0 +1,12 @@
+mphtxt2k
+build*
+Sort/SortTool
+.vscode/
+!buildApplicationLib.h
+CMakeLists.txt.user
+*.k
+*.mphtxt
+*.dat
+run_simulation
+results
+
