@@ -138,8 +138,110 @@ void PrismNedelec::basis(const int cell, const double* lambda, double* values) c
     phi[ie][2] = invJ[0][2]*E_ref[0] + invJ[1][2]*E_ref[1] + invJ[2][2]*E_ref[2];
   }
 } // end of basis function
-void PrismNedelec::curl(const int cell, const double* lambda, double* values) const{
 
+
+void PrismNedelec::curl(const int cell, const double* lambda, double* values) const{
+  double (*curlphi)[NDIM] = (double (*)[NDIM])values;
+
+  double xi = lambda[0];
+  double eta = lambda[1];
+  double zeta = lambda[2];
+
+  double L[3] = {1.0 - xi - eta, xi, eta};
+  double gradL[3][3] = {
+    {-1.0, -1.0, 0.0},
+    { 1.0,  0.0, 0.0},
+    { 0.0,  1.0, 0.0}
+  };
+
+  // 同上: 获取节点坐标并计算 Jacobian (此处为了安全和独立，重写计算过程)
+  double P[6][3];
+  for(int n = 0; n < 6; n++) {
+    int node_id = d_cell_node_idx[d_cell_node_ext[cell] + n];
+    P[n][0] = (*d_node_coord)(0, node_id);
+    P[n][1] = (*d_node_coord)(1, node_id);
+    P[n][2] = (*d_node_coord)(2, node_id);
+  }
+
+  double dN[6][3];
+  for(int i = 0; i < 3; i++) {
+    dN[i][0] = gradL[i][0] * (1.0 - zeta) / 2.0; dN[i][1] = gradL[i][1] * (1.0 - zeta) / 2.0; dN[i][2] = -L[i] / 2.0;
+    dN[i+3][0] = gradL[i][0] * (1.0 + zeta) / 2.0; dN[i+3][1] = gradL[i][1] * (1.0 + zeta) / 2.0; dN[i+3][2] = L[i] / 2.0;
+  }
+
+  double J[3][3] = {0};
+  for(int i = 0; i < 3; i++)
+    for(int j = 0; j < 3; j++)
+      for(int k = 0; k < 6; k++)
+        J[i][j] += P[k][i] * dN[k][j];
+
+  double detJ = J[0][0]*(J[1][1]*J[2][2] - J[1][2]*J[2][1])
+      - J[0][1]*(J[1][0]*J[2][2] - J[1][2]*J[2][0])
+      + J[0][2]*(J[1][0]*J[2][1] - J[1][1]*J[2][0]);
+  for(int ie = 0; ie < 9; ie++){
+    int edge = d_cell_edge_idx[d_cell_edge_ext[cell] + ie];
+    int v0 = d_edge_node_idx[d_edge_node_ext[edge] + 0];
+    int v1 = d_edge_node_idx[d_edge_node_ext[edge] + 1];
+
+    int in_order = (*d_edge_order)(0, edge);
+    if(!in_order) { int t = v0; v0 = v1; v1 = t; }
+    int lv0 = -1, lv1 = -1;
+    for(int n = 0; n < 6; n++) {
+      int nidx = d_cell_node_idx[d_cell_node_ext[cell] + n];
+      if(nidx == v0) lv0 = n;
+      if(nidx == v1) lv1 = n;
+    }
+
+    double curl_E_ref[3] = {0, 0, 0};
+    if(lv0 < 3 && lv1 < 3) {
+      // 底面
+      double A[3];
+      for(int d=0; d<3; d++) A[d] = L[lv0] * gradL[lv1][d] - L[lv1] * gradL[lv0][d];
+
+      double curlA[3];
+      CROSS_PRODUCT(gradL[lv0], gradL[lv1], curlA);
+      curlA[0] *= 2.0; curlA[1] *= 2.0; curlA[2] *= 2.0; // Curl(A_ij) = 2 grad(L_i) x grad(L_j)
+
+      double gradB[3] = {0, 0, -0.5}; // grad((1-zeta)/2)
+      double term1[3];
+      CROSS_PRODUCT(gradB, A, term1);
+
+      double z_fac = (1.0 - zeta) / 2.0;
+      for(int d=0; d<3; d++) curl_E_ref[d] = term1[d] + z_fac * curlA[d];
+    } // 底面结束
+    else if(lv0 >= 3 && lv1 >= 3) {
+      // 顶面
+      int a = lv0 - 3; int b = lv1 - 3;
+      double A[3];
+      for(int d=0; d<3; d++) A[d] = L[a] * gradL[b][d] - L[b] * gradL[a][d];
+
+      double curlA[3];
+      CROSS_PRODUCT(gradL[a], gradL[b], curlA);
+      curlA[0] *= 2.0; curlA[1] *= 2.0; curlA[2] *= 2.0;
+
+      double gradB[3] = {0, 0, 0.5}; // grad((1+zeta)/2)
+      double term1[3];
+      CROSS_PRODUCT(gradB, A, term1);
+
+      double z_fac = (1.0 + zeta) / 2.0;
+      for(int d=0; d<3; d++) curl_E_ref[d] = term1[d] + z_fac * curlA[d];
+    } // 顶面结束
+    else {
+      // 垂直
+      if(lv1 == lv0 + 3) {
+        double V[3] = {0, 0, 0.5};
+        CROSS_PRODUCT(gradL[lv0], V, curl_E_ref);
+      } else if(lv0 == lv1 + 3) {
+        double V[3] = {0, 0, -0.5};
+        CROSS_PRODUCT(gradL[lv1], V, curl_E_ref);
+      }
+    } // 垂直连接结束
+    // Piola 旋度变换:  curl_phys = (1 / detJ) * J * curl_E_ref
+    double invDet = 1.0 / detJ;
+    curlphi[ie][0] = invDet * (J[0][0]*curl_E_ref[0] + J[0][1]*curl_E_ref[1] + J[0][2]*curl_E_ref[2]);
+    curlphi[ie][1] = invDet * (J[1][0]*curl_E_ref[0] + J[1][1]*curl_E_ref[1] + J[1][2]*curl_E_ref[2]);
+    curlphi[ie][2] = invDet * (J[2][0]*curl_E_ref[0] + J[2][1]*curl_E_ref[1] + J[2][2]*curl_E_ref[2]);
+  } // 遍历edge
 }
 }
 }

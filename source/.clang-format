@@ -1,0 +1,3 @@
+BasedOnStyle: LLVM
+Standard: Cpp03
+ColumnLimit: 100

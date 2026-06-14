@@ -29,6 +29,64 @@ Maxwell {
   E_0_direction     = 1.0,0.0,0.0
   k_0_direction     = 0.0,0.0,1.0
   chi               = 0.0,0.0,0.0
+  entity_face_num = 8
+  simulation_setup = 0 //sweep 1 or single 0
+  frequency_setup = 1e9, 1e7, 2e9
+  Boundary {
+    ABC_face = 0
+    PEC_face = 0
+  }
+  Material {
+    material_num = 2
+    material_1 = 1,2,3
+    material_2 = 0
+    material1{
+      name = "Air"
+      mu_r = 1.0
+      epsilon_r = 1.0
+      sigma = 0.0
+      losstan = 0.0
+    }
+    material2{
+      name = "FR-4"
+      mu_r = 1.0
+      epsilon_r = 4.4
+      sigma = 0.
+      losstan = 0.01
+    }
+  }
+  Port {
+    analytical_waveport_num = 0
+    numerical_waveport_num = 1
+    lumpport_num = 0
+    ANAL_WP1{
+      type = 1 // 1方2圆
+      a = 0.0
+      b = 0.0
+      epsilon_r = 1.0
+      coordinate = 0.,0.,0.
+      face_list = 0
+      direction = 0.,0.,0.
+      power = 1.0
+      activated = FALSE
+    }
+    NUM_WP1{
+      face_list = 0
+      edge_list = 0
+      direction = 0.,0.,0.
+      power = 1.0
+      activated = TRUE
+    }
+    LP1{
+      width = 0
+      height = 0
+      face_list = 0
+      re_impedance = 1.0
+      im_impedance = 1.0
+      voltage = 1.0
+      activated = FALSE
+    }
+  }
 }
 
 
@@ -44,13 +102,28 @@ Solver {
   SubSolver {
     solver_lib      = "HYPRE"
     solver_name     = "AMS_CG"
-//  solver_lib = "MUMPS"
-//  solver_name = "LU"
-//  solver_name = "CHOLESKY"
+    //  solver_lib = "MUMPS"
+    //  solver_name = "LU"
+    //  solver_name = "CHOLESKY"
     residual_tol    = 1.0e-2  
     print_iter_info = 0
     max_iter = 100
   }
+  SolverModal{
+		// (必选)特征值求解器的名字, 将来还有其他的陆续加入
+		solver_lib = "SLEPc"
+
+		solver_name = "SLEPc_Solver"
+		// (必选) 求解模态的阶数
+		number_eigen_pair = 1 
+		// (可选) 专家参数, 类似petsc的命令行的设置方式, 用
+		// expert_options = "-help"
+		// 可以查看所有可以设置的选项   
+    // krylovschur power subspace arnoldi lanczos gd jd rqcg lapack arpack   
+    // expert_options = "-eps_type krylovschur -st_ksp_type bcgsl -st_pc_type gamg -eps_max_it 10000  -eps_tol 1.0e-6 -eps_largest_magnitude -eps_gen_non_hermitian -eps_nev 1"
+		 expert_options = "-eps_type krylovschur -st_ksp_type preonly -st_pc_type lu -st_pc_factor_mat_solver_package mumps -eps_max_it 10000  -eps_tol 1.0e-6 -eps_largest_magnitude -eps_gen_non_hermitian -eps_nev 1"
+		modal_vis = 1
+	}
 
   
 }	  
@@ -63,7 +136,7 @@ GridGeometry {
 
   MeshImportationParameter{ 
     file_name    = "sp_to1-0-1-0.k"
-    refine_times = 2
+    refine_times = 0
   }
 }
 

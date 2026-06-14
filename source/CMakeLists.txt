@@ -8,9 +8,9 @@ set(NDIM 3)
 set(CREL dbg)
 
 
-set(libfind_ROOT /home/jaumin1.14.1)
-set(JAUMIN_ROOT  /home/jaumin1.14.1)
-set(JPSOL_ROOT   /home/jaumin1.14.1)
+set(libfind_ROOT /opt/jaumin1.14)
+set(JAUMIN_ROOT  /opt/jaumin1.14)
+set(JPSOL_ROOT   /opt/jaumin1.14)
 list(INSERT CMAKE_MODULE_PATH 0 ${libfind_ROOT}/share/cmake/Modules/scns)
 list(APPEND CMAKE_MODULE_PATH   ${JAUMIN_ROOT}/share/cmake/Modules/scns)
 list(APPEND CMAKE_MODULE_PATH   ${JPSOL_ROOT}/share/cmake/Modules/scns)
