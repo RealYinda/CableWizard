@@ -11,3 +11,5 @@ run_simulation
 results
 debug*
 run*
+source/Claude.md
+.cache/

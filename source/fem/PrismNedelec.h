@@ -24,6 +24,8 @@ namespace appu {
 class PrismNedelec
 {
 public:
+    enum { NBAS = 9 };   // ★ GCC 4.8.5 安全的编译期常量，对齐四面体 Nedelec 的范式
+
     /**
          * 构造函数
          * 【改动】移除了 cell_jacobian，加入了 node_coord 用于实时计算双线性 Jacobian
@@ -48,6 +50,25 @@ public:
          */
     void curl(const int cell, const double* lambda, double* values) const;
 private:
+    /**
+         * 参考空间→物理空间的映射信息，basis() 与 curl() 共用。
+         */
+    struct PrismJacobian {
+        double J[3][3];       // 雅可比矩阵 ∂x/∂ξ
+        double invJ[3][3];    // 逆雅可比矩阵
+        double detJ;          // 行列式
+    };
+
+    /**
+         * 在指定积分点计算 Jacobian 及其逆。
+         * @param cell   单元编号
+         * @param lambda 参考坐标 (xi, eta, zeta)
+         * @param P      输出：6 个节点的物理坐标
+         * @param jac    输出：Jacobian、逆矩阵、行列式
+         */
+    void computeJacobian(const int cell, const double* lambda,
+                         double P[6][3], PrismJacobian& jac) const;
+
     const hier::Patch<NDIM>& d_patch;
     tbox::Pointer<pdat::EdgeData<NDIM, int> > d_edge_order;
     tbox::Pointer<pdat::NodeData<NDIM, double> > d_node_coord; // 物理坐标

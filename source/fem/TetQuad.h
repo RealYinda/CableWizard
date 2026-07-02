@@ -354,7 +354,6 @@ public:
                                     int faceorder, const int order, TYPE *value,
                                     const tbox::Array<double> &direction) const {
     const int nbas = shapefunc->nbas();
-    const int dim = shapefunc->ndim();
     TYPE *bb = value;
     const Quad *quad = d_face_quad_table[order];
     assert(face < NDIM + 1 && face >= 0);
@@ -374,8 +373,9 @@ public:
       barycentricToSpace(NDIM, d_patch.getNumberOfNodes(1),
                          d_patch.getPatchGeometry()->getNodeCoordinates()->getPointer(),
                          can_idx.getPointer() + can_ext[cell], bary3d, space_coords);
-      // 四面体基函数
-      double tetphi[nbas][dim];
+      // 四面体基函数 (3D: 6条边 × NDIM分量)
+      const int NBAS_TET = (NDIM == 2 ? 3 : 6);
+      double tetphi[NBAS_TET][NDIM];
       // 三角形基函数
       double triphi[3][2];
       shapefunc->basis(cell, bary3d, &(tetphi[0][0]));
