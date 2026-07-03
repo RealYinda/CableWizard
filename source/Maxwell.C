@@ -702,10 +702,11 @@ void Maxwell::buildLHSAndRHSOnPatch(hier::Patch<NDIM> &patch, const double time,
     }
     /// 数值波端口的边界条件
     for (int num_port = 0; num_port < numerical_waveport_num; num_port++) {
-      GET_PATCH_DATA(patch, modal_sol, d_sol_modal_array[num_port][active_mode], Vector, double);
-      double *modal_vec_pointer = modal_sol->getPointer();
       // 取出目前的wave port
       tbox::Pointer<NUM_WP> now_num_wp = NUM_WP_list[num_port];
+      // 判断该端口是否为激励端口 (activated==true: 入射激励; false: 仅匹配BC)
+      const bool is_input_port = now_num_wp->activated;
+
       // 取出模式dof映射
       int *modal_dof_map_edge =
           d_dof_info_modal_array[num_port]->getDOFMapping(patch, hier::EntityUtilities::EDGE);
@@ -713,7 +714,12 @@ void Maxwell::buildLHSAndRHSOnPatch(hier::Patch<NDIM> &patch, const double time,
           d_dof_info_modal_array[num_port]->getDOFMapping(patch, hier::EntityUtilities::NODE);
       double port_beta = sqrt(zita - zita / eigen_value_pairs[num_port][active_mode]);
 
-      dcomplex gama = dcomplex(0, 1) * port_beta;
+      // 吸收边界条件：对所有模式求和 gama，确保端口面正确吸收所有传播模式
+      dcomplex gama_sum(0, 0);
+      for (int m = 0; m < eigen_num; m++) {
+        double beta_m = sqrt(zita - zita / eigen_value_pairs[num_port][m]);
+        gama_sum += dcomplex(0, 1) * beta_m;
+      }
       for (int face_list_num = 0; face_list_num < now_num_wp->face_list.getSize();
            face_list_num++) {
         if (HAS_ENTITY_SET(patch, now_num_wp->face_list[face_list_num], FACE, 1)) {
@@ -727,51 +733,58 @@ void Maxwell::buildLHSAndRHSOnPatch(hier::Patch<NDIM> &patch, const double time,
                 port_i_list.getPointer(), port_i_list.getPointer() + port_i_list.size(), glo_ff);
             if (!is_on_port_face)
               continue;
+            // BC 项：所有端口（激励+匹配）都需要
             quad.faceQuadBasDotBas(cell, loc_ff, &shapefunc, 2, &(face_phi_x_phi[0][0]));
-            NTYPE edge_coef[3] = {0, 0, 0}; // 面上边的插值系数
-            NTYPE node_coef[3] = {0, 0, 0}; // 面上结点的插值系数
-            for (int i = 0; i < 3; i++) {
-              int edge = face_edge_idx[face_edge_ext[glo_ff] + i];
-              int edge_map = modal_dof_map_edge[edge];
-              if (edge_map == -1)
-                edge_coef[i] = 0; // 赋值PEC的边
-              else
-                edge_coef[i] = coefofunit * (modal_vec_pointer)[edge_map] / port_beta;
-            }
 
-            for (int i = 0; i < 3; i++) {
-              int node = face_node_idx[face_node_ext[glo_ff] + i];
-              int node_map = modal_dof_map_node[node];
-              if (node_map == -1)
-                node_coef[i] = 0;
-              else
-                node_coef[i] = coefofunit * (modal_vec_pointer)[node_map] * dcomplex(0, 1);
-            }
-            const int nnode = 3;
-            // 记得在老版本的DoubleVector中把.h文件拷贝到新版本的库里
-            tbox::Array<hier::DoubleVector<NDIM> > vertex_3d(nnode);
-            for (int i = 0; i < nnode; ++i) {
-              int node_id = face_node_idx[face_node_ext[glo_ff] + i];
-              for (int k = 0; k < NDIM; ++k) {
-                vertex_3d[i][k] = (*node_coord)(k, node_id);
+            // 激励项：仅输入端口需要
+            if (is_input_port) {
+              GET_PATCH_DATA(patch, modal_sol, d_sol_modal_array[num_port][active_mode], Vector, double);
+              double *modal_vec_pointer = modal_sol->getPointer();
+              NTYPE edge_coef[3] = {0, 0, 0}; // 面上边的插值系数
+              NTYPE node_coef[3] = {0, 0, 0}; // 面上结点的插值系数
+              for (int i = 0; i < 3; i++) {
+                int edge = face_edge_idx[face_edge_ext[glo_ff] + i];
+                int edge_map = modal_dof_map_edge[edge];
+                if (edge_map == -1)
+                  edge_coef[i] = 0; // 赋值PEC的边
+                else
+                  edge_coef[i] = coefofunit * (modal_vec_pointer)[edge_map] / port_beta;
               }
-            }
-            tbox::Array<hier::DoubleVector<NDIM - 1> > vertex_2d(nnode);
-            // 转到端口面的二维局部坐标
-            Transfer3DCoordTo2D(vertex_3d, now_num_wp->direction, vertex_2d);
-            double area = fabs(0.5 * (AREA2DQUAD(vertex_2d[0], vertex_2d[1], vertex_2d[2])));
-            bool raw_order = AREA2DQUAD(vertex_2d[0], vertex_2d[1], vertex_2d[2]) > 0;
-            if (!raw_order) {
-              std::swap(vertex_2d[1], vertex_2d[2]);
-            }
-            tbox::Array<tbox::Array<double> > BasGrad(3);
-            GradientOn2DCoord(vertex_2d, BasGrad);
-            int faceorder = 0;
-            if (raw_order)
-              faceorder = 1;
-            quad.faceQuadfunctionDotBas_modal<appu::Nedelec, appu::triNedelec, dcomplex, dcomplex>(
-                cell, loc_ff, &edge_coef[0], &node_coef[0], &shapefunc, &trishapefunc, BasGrad,
-                faceorder, 0, &(face_fun_x_phi[0]), now_num_wp->direction);
+
+              for (int i = 0; i < 3; i++) {
+                int node = face_node_idx[face_node_ext[glo_ff] + i];
+                int node_map = modal_dof_map_node[node];
+                if (node_map == -1)
+                  node_coef[i] = 0;
+                else
+                  node_coef[i] = coefofunit * (modal_vec_pointer)[node_map] * dcomplex(0, 1);
+              }
+              const int nnode = 3;
+              // 记得在老版本的DoubleVector中把.h文件拷贝到新版本的库里
+              tbox::Array<hier::DoubleVector<NDIM> > vertex_3d(nnode);
+              for (int i = 0; i < nnode; ++i) {
+                int node_id = face_node_idx[face_node_ext[glo_ff] + i];
+                for (int k = 0; k < NDIM; ++k) {
+                  vertex_3d[i][k] = (*node_coord)(k, node_id);
+                }
+              }
+              tbox::Array<hier::DoubleVector<NDIM - 1> > vertex_2d(nnode);
+              // 转到端口面的二维局部坐标
+              Transfer3DCoordTo2D(vertex_3d, now_num_wp->direction, vertex_2d);
+              double area = fabs(0.5 * (AREA2DQUAD(vertex_2d[0], vertex_2d[1], vertex_2d[2])));
+              bool raw_order = AREA2DQUAD(vertex_2d[0], vertex_2d[1], vertex_2d[2]) > 0;
+              if (!raw_order) {
+                std::swap(vertex_2d[1], vertex_2d[2]);
+              }
+              tbox::Array<tbox::Array<double> > BasGrad(3);
+              GradientOn2DCoord(vertex_2d, BasGrad);
+              int faceorder = 0;
+              if (raw_order)
+                faceorder = 1;
+              quad.faceQuadfunctionDotBas_modal<appu::Nedelec, appu::triNedelec, dcomplex, dcomplex>(
+                  cell, loc_ff, &edge_coef[0], &node_coef[0], &shapefunc, &trishapefunc, BasGrad,
+                  faceorder, 0, &(face_fun_x_phi[0]), now_num_wp->direction);
+            } // end of is_input_port
           }
         }
       }
@@ -1054,10 +1067,11 @@ void Maxwell::buildEMMatrixOnPatch(hier::Patch<NDIM> &patch, const double time, 
 
     // 数值波端口部分部分
     for (int num_port = 0; num_port < numerical_waveport_num; num_port++) {
-      GET_PATCH_DATA(patch, modal_sol, d_sol_modal_array[num_port][active_mode], Vector, double);
-      double *modal_vec_pointer = modal_sol->getPointer();
       // 取出目前的wave port
       tbox::Pointer<NUM_WP> now_num_wp = NUM_WP_list[num_port];
+      // 判断该端口是否为激励端口 (activated==true: 入射激励; false: 仅匹配BC)
+      const bool is_input_port = now_num_wp->activated;
+
       // 取出模式dof映射
       int *modal_dof_map_edge =
           d_dof_info_modal_array[num_port]->getDOFMapping(patch, hier::EntityUtilities::EDGE);
@@ -1065,7 +1079,12 @@ void Maxwell::buildEMMatrixOnPatch(hier::Patch<NDIM> &patch, const double time, 
           d_dof_info_modal_array[num_port]->getDOFMapping(patch, hier::EntityUtilities::NODE);
       double port_beta = sqrt(zita - zita / eigen_value_pairs[num_port][active_mode]);
 
-      dcomplex gama = dcomplex(0, 1) * port_beta;
+      // 吸收边界条件：对所有模式求和 gama，确保端口面正确吸收所有传播模式
+      dcomplex gama_sum(0, 0);
+      for (int m = 0; m < eigen_num; m++) {
+        double beta_m = sqrt(zita - zita / eigen_value_pairs[num_port][m]);
+        gama_sum += dcomplex(0, 1) * beta_m;
+      }
       for (int face_list_num = 0; face_list_num < now_num_wp->face_list.getSize();
            face_list_num++) {
         if (HAS_ENTITY_SET(patch, now_num_wp->face_list[face_list_num], FACE, 1)) {
@@ -1079,60 +1098,69 @@ void Maxwell::buildEMMatrixOnPatch(hier::Patch<NDIM> &patch, const double time, 
                 port_i_list.getPointer(), port_i_list.getPointer() + port_i_list.size(), glo_ff);
             if (!is_on_port_face)
               continue;
+            // BC 项：所有端口（激励+匹配）都需要
             quad.faceQuadBasDotBas(cell, loc_ff, &shapefunc, 2, &(face_phi_x_phi[0][0]));
-            NTYPE edge_coef[3] = {0, 0, 0}; // 面上边的插值系数
-            NTYPE node_coef[3] = {0, 0, 0}; // 面上结点的插值系数
-            for (int i = 0; i < 3; i++) {
-              int edge = face_edge_idx[face_edge_ext[glo_ff] + i];
-              int edge_map = modal_dof_map_edge[edge];
-              if (edge_map == -1)
-                edge_coef[i] = 0; // 赋值PEC的边
-              else
-                edge_coef[i] = coefofunit * (modal_vec_pointer)[edge_map] / port_beta;
-            }
 
-            for (int i = 0; i < 3; i++) {
-              int node = face_node_idx[face_node_ext[glo_ff] + i];
-              int node_map = modal_dof_map_node[node];
-              if (node_map == -1)
-                node_coef[i] = 0;
-              else
-                node_coef[i] = coefofunit * (modal_vec_pointer)[node_map] * dcomplex(0, 1);
-            }
-            const int nnode = 3;
-            // 记得在老版本的DoubleVector中把.h文件拷贝到新版本的库里
-            tbox::Array<hier::DoubleVector<NDIM> > vertex_3d(nnode);
-            for (int i = 0; i < nnode; ++i) {
-              int node_id = face_node_idx[face_node_ext[glo_ff] + i];
-              for (int k = 0; k < NDIM; ++k) {
-                vertex_3d[i][k] = (*node_coord)(k, node_id);
+            // 激励项：仅输入端口需要
+            if (is_input_port) {
+              GET_PATCH_DATA(patch, modal_sol, d_sol_modal_array[num_port][active_mode], Vector, double);
+              double *modal_vec_pointer = modal_sol->getPointer();
+              NTYPE edge_coef[3] = {0, 0, 0}; // 面上边的插值系数
+              NTYPE node_coef[3] = {0, 0, 0}; // 面上结点的插值系数
+              for (int i = 0; i < 3; i++) {
+                int edge = face_edge_idx[face_edge_ext[glo_ff] + i];
+                int edge_map = modal_dof_map_edge[edge];
+                if (edge_map == -1)
+                  edge_coef[i] = 0; // 赋值PEC的边
+                else
+                  edge_coef[i] = coefofunit * (modal_vec_pointer)[edge_map] / port_beta;
               }
-            }
-            tbox::Array<hier::DoubleVector<NDIM - 1> > vertex_2d(nnode);
-            // 转到端口面的二维局部坐标
-            Transfer3DCoordTo2D(vertex_3d, now_num_wp->direction, vertex_2d);
-            bool raw_order = AREA2DQUAD(vertex_2d[0], vertex_2d[1], vertex_2d[2]) > 0;
-            if (!raw_order) {
-              std::swap(vertex_2d[1], vertex_2d[2]);
-            }
-            tbox::Array<tbox::Array<double> > BasGrad(3);
-            GradientOn2DCoord(vertex_2d, BasGrad);
-            int faceorder = 0;
-            if (raw_order)
-              faceorder = 1;
-            if (num_port == 0) {
+
+              for (int i = 0; i < 3; i++) {
+                int node = face_node_idx[face_node_ext[glo_ff] + i];
+                int node_map = modal_dof_map_node[node];
+                if (node_map == -1)
+                  node_coef[i] = 0;
+                else
+                  node_coef[i] = coefofunit * (modal_vec_pointer)[node_map] * dcomplex(0, 1);
+              }
+              const int nnode = 3;
+              // 记得在老版本的DoubleVector中把.h文件拷贝到新版本的库里
+              tbox::Array<hier::DoubleVector<NDIM> > vertex_3d(nnode);
+              for (int i = 0; i < nnode; ++i) {
+                int node_id = face_node_idx[face_node_ext[glo_ff] + i];
+                for (int k = 0; k < NDIM; ++k) {
+                  vertex_3d[i][k] = (*node_coord)(k, node_id);
+                }
+              }
+              tbox::Array<hier::DoubleVector<NDIM - 1> > vertex_2d(nnode);
+              // 转到端口面的二维局部坐标
+              Transfer3DCoordTo2D(vertex_3d, now_num_wp->direction, vertex_2d);
+              bool raw_order = AREA2DQUAD(vertex_2d[0], vertex_2d[1], vertex_2d[2]) > 0;
+              if (!raw_order) {
+                std::swap(vertex_2d[1], vertex_2d[2]);
+              }
+              tbox::Array<tbox::Array<double> > BasGrad(3);
+              GradientOn2DCoord(vertex_2d, BasGrad);
+              int faceorder = 0;
+              if (raw_order)
+                faceorder = 1;
               quad.faceQuadfunctionDotBas_modal<appu::Nedelec, appu::triNedelec, dcomplex,
                                                 dcomplex>(
                   cell, loc_ff, &edge_coef[0], &node_coef[0], &shapefunc, &trishapefunc, BasGrad,
                   faceorder, 0, &(face_fun_x_phi[0]), now_num_wp->direction);
+              dcomplex gama_in = dcomplex(0, 1) * port_beta;
               for (int i = 0; i < nedge; i++) {
-                b[i] += ((-2.0 * gama * face_fun_x_phi[i]));
+                b[i] += ((-2.0 * gama_in * face_fun_x_phi[i]));
               }
-            }
+            } // end of is_input_port
+
+            double abs_gama_sum = sqrt(gama_sum.real() * gama_sum.real() +
+                                       gama_sum.imag() * gama_sum.imag());
             for (int i = 0; i < nedge; i++) {
               for (int j = 0; j < nedge; j++) {
-                A[i][j] += (gama * face_phi_x_phi[i][j]);
-                A_aux[i][j] += (abs(gama) * face_phi_x_phi[i][j]);
+                A[i][j] += (gama_sum * face_phi_x_phi[i][j]);
+                A_aux[i][j] += (abs_gama_sum * face_phi_x_phi[i][j]);
               }
             }
           } // end of face
